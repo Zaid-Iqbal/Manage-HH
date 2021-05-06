@@ -10,10 +10,18 @@
 
 <body class="stackedit">
   <div class="stackedit__html"><h1 id="manage-hardware-hub">Manage Hardware Hub</h1>
-<p>Automatically manages and cleans the website every times it is run<br>
+<p>Helps to simplify the management of the site<br>
 (<a href="http://zed.exioite.com">zed.exioite.com</a>)</p>
 <h2 id="goal">Goal</h2>
-<p>Semi-automate the management of the website</p>
+<ul>
+<li><strong>Full Update:</strong> Does all the functions below at once</li>
+<li><strong>Update Existing Posts:</strong> Keeps the information of each post on the site up to date. (Ex: update the price if it changes)</li>
+<li><strong>Add Posts:</strong> Goes through the products in the SQL NewProducts Table and adds them to the site</li>
+<li><strong>Clean Pic Folder:</strong> Removes all unused pictures on my laptop hard drive</li>
+<li><strong>Clean Media:</strong> Removes all unused pictures from the wordpress media library</li>
+<li><strong>Populate SQL Products:</strong> creates a copy of all the posts on the site into the Products SQL table</li>
+<li><strong>Populate SQL NewProducts:</strong> Adds all the new products from amazon on the excel file to the NewProducts SQL Table</li>
+</ul>
 <h2 id="technologies">Technologies</h2>
 <p>-Selenium: Webscraper for C#</p>
 <blockquote>
