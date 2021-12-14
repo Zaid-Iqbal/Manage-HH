@@ -4,13 +4,46 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Linq;
 using System.Windows.Forms;
+using WordPressPCL.Models;
 
 namespace Manage_HH
 {
     class Formatting
     {
         public static String sample = @"< p >$50 &#8211;&gt;$28</p>\n";
+
+        /// <summary>
+        /// Remove duplicate tags added from unknown bug. My guess is that running 3 threads at once causes some products to be added twice somehow
+        /// </summary>
+        public static void RemoveDuplicates()
+        {
+            //Remove duplicate tags from unknown bug
+            List<String> duplicates = Wordpress.tags.GroupBy(x => x).Where(g => g.Count() > 1).Select(y => y.Key).ToList();
+            foreach (String str in duplicates)
+            {
+                //remove tag
+                Wordpress.tags.Remove(str);
+                //remove product
+                for (int i = 0; i < Product.products.Count; i++)
+                {
+                    if (Product.products[i].ID == str)
+                    {
+                        Product.products.RemoveAt(i);
+                        break;
+                    }
+                }
+            }
+
+            //remove the picture on hard drive
+            Wordpress.CleanImagesFolder(duplicates).Wait();
+
+            if (Wordpress.tags.Count != Wordpress.tags.Distinct().Count())
+            {
+                MessageBox.Show("Error: There are still duplicates");
+            }
+        }
 
         public static String[] getCreds()
         {
@@ -60,8 +93,7 @@ namespace Manage_HH
             }
             else
             {
-                MessageBox.Show("Formatting.CatIDtoCategory() Error: Categroy not found");
-                return "";
+                return "Uncategorized";
             }
 
         }
@@ -156,17 +188,14 @@ namespace Manage_HH
         /// <returns></returns>
         public static int ElementToInt(IWebDriver driver, String xpath)
         {
-            return (int)Math.Round(Convert.ToDouble((driver.FindElement(By.XPath(xpath)).Text).Replace("$","")));
-        }
-
-        /// <summary>
-        /// same as above
-        /// </summary>
-        /// <param name="element"></param>
-        /// <returns></returns>
-        public static int ElementToInt(IWebElement element)
-        {
-            return (int)Math.Round(Convert.ToDouble((element.Text).Replace("$", "")));
+            try
+            {
+                return (int)Math.Round(Convert.ToDouble((driver.FindElement(By.XPath(xpath)).Text).Replace("$", "")));
+            }
+            catch (FormatException)
+            {
+                return -1;
+            }
         }
 
         /// <summary>
@@ -269,156 +298,6 @@ namespace Manage_HH
             return stream;
         }
 
-        /// <summary>
-        /// Does a fuzzy search for a pattern within a string.
-        /// </summary>
-        /// <param name="stringToSearch">The string to search for the pattern in.</param>
-        /// <param name="pattern">The pattern to search for in the string.</param>
-        /// <returns>true if each character in pattern is found sequentially within stringToSearch; otherwise, false.</returns>
-        public static bool FuzzyMatch(string stringToSearch, string pattern)
-        {
-            var patternIdx = 0;
-            var strIdx = 0;
-            var patternLength = pattern.Length;
-            var strLength = stringToSearch.Length;
-
-            while (patternIdx != patternLength && strIdx != strLength)
-            {
-                if (char.ToLower(pattern[patternIdx]) == char.ToLower(stringToSearch[strIdx]))
-                    ++patternIdx;
-                ++strIdx;
-            }
-
-            return patternLength != 0 && strLength != 0 && patternIdx == patternLength;
-        }
-
-        /// <summary>
-        /// Does a fuzzy search for a pattern within a string, and gives the search a score on how well it matched.
-        /// </summary>
-        /// <param name="stringToSearch">The string to search for the pattern in.</param>
-        /// <param name="pattern">The pattern to search for in the string.</param>
-        /// <param name="outScore">The score which this search received, if a match was found.</param>
-        /// <returns>true if each character in pattern is found sequentially within stringToSearch; otherwise, false.</returns>
-        public static bool FuzzyMatch(string stringToSearch, string pattern, out int outScore)
-        {
-            // Score consts
-            const int adjacencyBonus = 5;               // bonus for adjacent matches
-            const int separatorBonus = 10;              // bonus if match occurs after a separator
-            const int camelBonus = 10;                  // bonus if match is uppercase and prev is lower
-
-            const int leadingLetterPenalty = -3;        // penalty applied for every letter in stringToSearch before the first match
-            const int maxLeadingLetterPenalty = -9;     // maximum penalty for leading letters
-            const int unmatchedLetterPenalty = -1;      // penalty for every letter that doesn't matter
-
-
-            // Loop variables
-            var score = 0;
-            var patternIdx = 0;
-            var patternLength = pattern.Length;
-            var strIdx = 0;
-            var strLength = stringToSearch.Length;
-            var prevMatched = false;
-            var prevLower = false;
-            var prevSeparator = true;                   // true if first letter match gets separator bonus
-
-            // Use "best" matched letter if multiple string letters match the pattern
-            char? bestLetter = null;
-            char? bestLower = null;
-            int? bestLetterIdx = null;
-            var bestLetterScore = 0;
-
-            var matchedIndices = new List<int>();
-
-            // Loop over strings
-            while (strIdx != strLength)
-            {
-                var patternChar = patternIdx != patternLength ? pattern[patternIdx] as char? : null;
-                var strChar = stringToSearch[strIdx];
-
-                var patternLower = patternChar != null ? char.ToLower((char)patternChar) as char? : null;
-                var strLower = char.ToLower(strChar);
-                var strUpper = char.ToUpper(strChar);
-
-                var nextMatch = patternChar != null && patternLower == strLower;
-                var rematch = bestLetter != null && bestLower == strLower;
-
-                var advanced = nextMatch && bestLetter != null;
-                var patternRepeat = bestLetter != null && patternChar != null && bestLower == patternLower;
-                if (advanced || patternRepeat)
-                {
-                    score += bestLetterScore;
-                    matchedIndices.Add((int)bestLetterIdx);
-                    bestLetter = null;
-                    bestLower = null;
-                    bestLetterIdx = null;
-                    bestLetterScore = 0;
-                }
-
-                if (nextMatch || rematch)
-                {
-                    var newScore = 0;
-
-                    // Apply penalty for each letter before the first pattern match
-                    // Note: Math.Max because penalties are negative values. So max is smallest penalty.
-                    if (patternIdx == 0)
-                    {
-                        var penalty = Math.Max(strIdx * leadingLetterPenalty, maxLeadingLetterPenalty);
-                        score += penalty;
-                    }
-
-                    // Apply bonus for consecutive bonuses
-                    if (prevMatched)
-                        newScore += adjacencyBonus;
-
-                    // Apply bonus for matches after a separator
-                    if (prevSeparator)
-                        newScore += separatorBonus;
-
-                    // Apply bonus across camel case boundaries. Includes "clever" isLetter check.
-                    if (prevLower && strChar == strUpper && strLower != strUpper)
-                        newScore += camelBonus;
-
-                    // Update pattern index IF the next pattern letter was matched
-                    if (nextMatch)
-                        ++patternIdx;
-
-                    // Update best letter in stringToSearch which may be for a "next" letter or a "rematch"
-                    if (newScore >= bestLetterScore)
-                    {
-                        // Apply penalty for now skipped letter
-                        if (bestLetter != null)
-                            score += unmatchedLetterPenalty;
-
-                        bestLetter = strChar;
-                        bestLower = char.ToLower((char)bestLetter);
-                        bestLetterIdx = strIdx;
-                        bestLetterScore = newScore;
-                    }
-
-                    prevMatched = true;
-                }
-                else
-                {
-                    score += unmatchedLetterPenalty;
-                    prevMatched = false;
-                }
-
-                // Includes "clever" isLetter check.
-                prevLower = strChar == strLower && strLower != strUpper;
-                prevSeparator = strChar == '_' || strChar == ' ';
-
-                ++strIdx;
-            }
-
-            // Apply score for last match
-            if (bestLetter != null)
-            {
-                score += bestLetterScore;
-                matchedIndices.Add((int)bestLetterIdx);
-            }
-
-            outScore = score;
-            return patternIdx == patternLength;
-        }
+        
     }
 }

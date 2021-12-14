@@ -9,20 +9,61 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using WordPressPCL;
 using WordPressPCL.Models;
+using System.Linq;
 
 namespace Manage_HH
 {
     class Wordpress
     {
+        //Remebers all the tags that have already been on the site and the new ones coming in. Used to check if an incoming new listing has already been added
+        public static List<String> tags = SendGetTags(GetTags()).Select(k => k.Name.ToUpper()).ToList();
+
+
         /// <summary>
-        /// Converts the Task<list<Post>> to List<Post>
+        /// Remove empty tags on website
+        /// </summary>
+        public static async void RemoveEmptyTags()
+        {
+            var client = await GetClient();
+            List<Tag> tags = SendGetTags(GetTags());
+            foreach (var tag in tags)
+            {
+                if (tag.Count == 0)
+                {
+                    client.Tags.Delete(tag.Id);
+                }
+            }
+        }
+
+        public static List<String> FindDuplicates(List<String> lst)
+        {
+            return lst.GroupBy(x => x)
+              .Where(g => g.Count() > 1)
+              .Select(y => y.Key)
+              .ToList();
+        }
+
+        /// <summary>
+        /// Converts the Task<list<Post>> to List<Post> and removes duplicates from Wordpress
         /// </summary>
         /// <param name="posts"></param>
         /// <returns></returns>
-        public static List<Post> SendGetPosts(Task<List<Post>> posts)
+        public static List<Post> SendGetPosts(Task<List<Post>> Rawposts)
         {
-            posts.Wait();
-            return posts.Result.ToList();
+            List<Post> posts = Rawposts.Result;
+            var check = FindDuplicates(posts.Select(x => x.Title.Rendered).ToList());
+            if (check.Count > 0)
+            {
+                var client = GetClient().Result;
+                foreach (var duplicateName in check)
+                {
+                    var duplicates = posts.Where(y => y.Title.Rendered == duplicateName).ToList();
+                    client.Tags.Delete(duplicates[0].Tags[0]);
+                    client.Posts.Delete(duplicates[0].Id);
+                    posts.Remove(duplicates[0]);
+                }
+            }
+            return posts.ToList();
         }
 
         /// <summary>
@@ -33,6 +74,19 @@ namespace Manage_HH
         {
             var client = await GetClient();
             return client.Posts.GetAll().Result.ToList();
+        }
+
+        internal static async Task RemoveNoURLPostsAsync()
+        {
+            var client = await GetClient();
+            List<Post> posts = GetPosts().Result;
+            foreach (Post post in posts)
+            {
+                if(!post.Link.Contains("https://www.amazon.com"))
+                {
+                    client.Posts.Delete(post.Id).Wait();
+                }
+            }
         }
 
         /// <summary>
@@ -56,7 +110,17 @@ namespace Manage_HH
                     goto restart;
                 }
             }
+        }
 
+        public static async Task CleanImagesFolder(List<String> IDs)
+        {
+            var client = await GetClient();
+            Dictionary<String, MediaItem> MediaIDtoMedia = client.Media.GetAll().Result.ToDictionary(k => k.Title.Rendered);
+            restart:
+            foreach (String ID in IDs)
+            {
+                File.Delete(ID);
+            }
         }
 
         /// <summary>
@@ -67,27 +131,9 @@ namespace Manage_HH
         public static async Task RemoveProduct(Product product)
         {
             var client = await GetClient();
-            client.Posts.Delete(int.Parse(SendGetTag(GetTag(product))));
-        }
-
-        /// <summary>
-        /// Converts Task<List<String>> to List<String>
-        /// </summary>
-        /// <param name="list"></param>
-        /// <returns></returns>
-        public static List<String> SendLinks(Task<List<String>> list)
-        {
-            return list.Result;
-        }
-        public static async Task<List<String>> GetLinks()
-        {
-            var client = await GetClient();
-            List<String> Links = new List<string>();
-            foreach (Post post in client.Posts.GetAll().Result)
-            {
-                Links.Add(post.Link);
-            }
-            return Links;
+            Dictionary<String, Tag> tagsDict = SendGetTags(GetTags()).ToDictionary(p => p.Name);
+            client.Posts.Delete(int.Parse(tagsDict[product.ID].Id.ToString())).Wait();
+            //client.Posts.Delete(int.Parse(SendGetTag(GetTag(product)))).Wait();
         }
 
         /// <summary>
@@ -96,21 +142,35 @@ namespace Manage_HH
         /// <returns></returns>
         public static async Task RemoveDuplicates()
         {
+            //TODO figure out why there are still duplicates
             var client = GetClient().Result;
 
             restart:
-            List<Tag> tags = SendGetTags(GetTags());
-            Dictionary<int,Tag> tagsDict = tags.ToDictionary(p => p.Id);
+            Dictionary<int,Tag> tagsDict = SendGetTags(GetTags()).ToDictionary(p => p.Id);
 
             List<Post> posts = client.Posts.GetAll().Result.ToList();
-            Dictionary<String, Post> postsDict = posts.ToDictionary(p => tagsDict[p.Tags[0]].Name);
+            //Dictionary<String, Post> postsDict = posts.ToDictionary(p => tagsDict[p.Tags[0]].Name);
+
+            //tracks products that have already been deleted so they aren't deleted twice
+            List<Post> deleted = new List<Post>();
 
             foreach (Post post1 in posts)
             {
+                if (deleted.Contains(post1))
+                {
+                    continue;
+                }
                 String title1 = post1.Title.Rendered;
                 String id1 = tagsDict[post1.Tags[0]].Name;
+
                 foreach (Post post2 in posts)
                 {
+
+                    if (deleted.Contains(post2))
+                    {
+                        continue;
+                    }
+
                     String title2 = post2.Title.Rendered;
                     String id2 = tagsDict[post2.Tags[0]].Name;
 
@@ -121,42 +181,15 @@ namespace Manage_HH
 
                     if (post1.Id != post2.Id && (title1 == title2 || id1 == id2))
                     {
-                        client.Media.Delete(post2.FeaturedMedia.Value).Wait();
+                        if (post2.FeaturedMedia.Value != 0)
+                        {
+                            client.Media.Delete(post2.FeaturedMedia.Value).Wait();
+                        }
                         client.Tags.Delete(post2.Tags[0]).Wait();
                         client.Posts.Delete(post2.Id).Wait();
 
-                        //await client.Media.Delete(post2.FeaturedMedia.Value);
-                        //await client.Tags.Delete(post2.Tags[0]);
-                        //await client.Posts.Delete(post2.Id);
-
-                        //try
-                        //{
-                        //    await client.Media.Delete(post2.FeaturedMedia.Value);
-                        //}
-                        //catch (Exception)
-                        //{
-                        //    MessageBox.Show("Unable to delete picture at ID: " + id2 + ".\nMight already be deleted");
-                        //}
-
-                        //try
-                        //{
-                        //    await client.Tags.Delete(post2.Tags[0]);
-                        //}
-                        //catch (Exception)
-                        //{
-                        //    MessageBox.Show("Unable to delete tag at ID: " + id2 + ".\nMight already be deleted");
-                        //}
-
-                        //try
-                        //{
-                        //    await client.Posts.Delete(post2.Id);
-                        //}
-                        //catch (Exception)
-                        //{
-                        //    MessageBox.Show("Unable to delete post at ID: " + id2 + ".\nMight already be deleted");
-                        //}
-
-                        goto restart;
+                        deleted.Add(post2);
+                        goto restart;                     
                     }
                 }
             }
@@ -170,30 +203,6 @@ namespace Manage_HH
         public static String SendGetTag(Task<String> str)
         {
             return str.Result;
-        }
-
-        /// <summary>
-        /// gets the tag of the product passed in from the site
-        /// </summary>
-        /// <param name="product"></param>
-        /// <returns></returns>
-        public static async Task<String> GetTag(Product product)
-        {
-            var client = await GetClient();
-            List<Tag> tags = client.Tags.GetAll().Result.ToList();
-            if (await client.IsValidJWToken())
-            {
-                foreach (Tag tag in tags)
-                {
-                    if (product.ID == tag.Name)
-                    {
-                        return tag.Id.ToString();
-                    }
-                }
-
-                return "Tag Not Found";
-            }
-            return "client not approved";
         }
 
 
@@ -226,28 +235,31 @@ namespace Manage_HH
         public static async Task<String> GetTag(Post post)
         {
             var client = await GetClient();
-            List<Tag> tags = client.Tags.GetAll().Result.ToList();
-            if (await client.IsValidJWToken())
-            {
-                foreach (Tag tag in tags)
-                {
-                    if (post.Tags[0] == tag.Id)
-                    {
-                        return tag.Name;
-                    }
-                }
-                //for (int x = 0; x < tags.Count; x++)
-                //{
-                //    if(post.Tags[0] == tags[x].Id)
-                //    {
-                //        Selenium.tag = tags[x].Name;
-                //        goto end;
-                //    }
-                //    count++;
-                //}
-                return "Tag Not Found";
-            }
-            return "client not approved";
+            Dictionary<int, Tag> tagsDict = SendGetTags(GetTags()).ToDictionary(p => p.Id);
+            return tagsDict[post.Tags[0]].Name;
+
+            //List<Tag> tags = client.Tags.GetAll().Result.ToList();
+            //if (await client.IsValidJWToken())
+            //{
+            //    foreach (Tag tag in tags)
+            //    {
+            //        if (post.Tags[0] == tag.Id)
+            //        {
+            //            return tag.Name;
+            //        }
+            //    }
+            //    //for (int x = 0; x < tags.Count; x++)
+            //    //{
+            //    //    if(post.Tags[0] == tags[x].Id)
+            //    //    {
+            //    //        Selenium.tag = tags[x].Name;
+            //    //        goto end;
+            //    //    }
+            //    //    count++;
+            //    //}
+            //    return "Tag Not Found";
+            //}
+            //return "client not approved";
         }
 
         /// <summary>
@@ -257,50 +269,49 @@ namespace Manage_HH
         public static async Task CleanMedia()
         {
             var client = await GetClient();
-            if(await client.IsValidJWToken())
+            
+            //List of pics being used and need to be kept
+            List<int> used = new List<int>();
+
+            //Enter in a media ID to get back a Post assosiated with that ID
+            Dictionary<int?,Post> mediaIDtoPost = client.Posts.GetAll().Result.ToDictionary(k => k.FeaturedMedia);
+            List<MediaItem> media = client.Media.GetAll().Result.ToList();
+
+            //If picID cannot be matched to a post, that must mean that pic is no longer being used and is then deleted
+            foreach (MediaItem pic in media)
             {
-                //List of pics being used and need to be kept
-                List<int> used = new List<int>();
-
-                //Enter in a media ID to get back a Post assosiated with that ID
-                Dictionary<int?,Post> mediaIDtoPost = client.Posts.GetAll().Result.ToDictionary(k => k.FeaturedMedia);
-                List<MediaItem> media = client.Media.GetAll().Result.ToList();
-
-                //If picID cannot be matched to a post, that must mean that pic is no longer being used and is then deleted
-                foreach (MediaItem pic in media)
+                try
                 {
-                    try
-                    {
-                        _ = mediaIDtoPost[pic.Id];
-                    }
-                    catch (KeyNotFoundException)
-                    {
-                        await client.Media.Delete(pic.Id);
-                    }
+                    _ = mediaIDtoPost[pic.Id];
                 }
-                
-                ////Grabs Posts and Media. Compares the ID of each. If true, add to the used list
-                //foreach (Post post in posts)
-                //{
-                //    foreach (MediaItem pic in media)
-                //    {
-                //        if(post.FeaturedMedia == pic.Id)
-                //        {
-                //            used.Add(pic.Id);
-                //            break;
-                //        }
-                //    }
-                //}
-
-                ////Delete all picture from media library that arent in the used list
-                //foreach (MediaItem pic in client.Media.GetAll().Result.ToList())
-                //{
-                //    if (!used.Contains(pic.Id) && !pic.Title.Rendered.Contains("HH-logo") && !pic.Title.Rendered.Contains("favicon.png") && !pic.Title.Rendered.Contains("HH logo invert"))
-                //    {
-                //        await client.Media.Delete(pic.Id);
-                //    }
-                //}
+                catch (KeyNotFoundException)
+                {
+                    client.Media.Delete(pic.Id).Wait();
+                }
             }
+                
+            ////Grabs Posts and Media. Compares the ID of each. If true, add to the used list
+            //foreach (Post post in posts)
+            //{
+            //    foreach (MediaItem pic in media)
+            //    {
+            //        if(post.FeaturedMedia == pic.Id)
+            //        {
+            //            used.Add(pic.Id);
+            //            break;
+            //        }
+            //    }
+            //}
+
+            ////Delete all picture from media library that arent in the used list
+            //foreach (MediaItem pic in client.Media.GetAll().Result.ToList())
+            //{
+            //    if (!used.Contains(pic.Id) && !pic.Title.Rendered.Contains("HH-logo") && !pic.Title.Rendered.Contains("favicon.png") && !pic.Title.Rendered.Contains("HH logo invert"))
+            //    {
+            //        await client.Media.Delete(pic.Id);
+            //    }
+            //}
+            
             
         }
 
@@ -308,13 +319,14 @@ namespace Manage_HH
         /// returns client for wordpress site
         /// </summary>
         /// <returns></returns>
-        private static async Task<WordPressClient> GetClient()
+        public static async Task<WordPressClient> GetClient()
         {
             //JWT authentication
             var client = new WordPressClient("https://zed.exioite.com/wp-json/");
             client.AuthMethod = AuthMethod.JWT;
             String[] creds = Formatting.getCreds();
-            await client.RequestJWToken(creds[0], creds[1]);
+            client.RequestJWToken(creds[0], creds[1]).Wait();
+            //await client.RequestJWToken("zaid@exioite.com", "*xuFKWOX@t8Oc$8fgALK4HLh");
             return client;
         }
 
@@ -325,41 +337,23 @@ namespace Manage_HH
         /// <param name="wait"></param>
         /// <param name="list"></param>
         /// <returns></returns>
-        public static async Task ReadWebsite()
+        public static async Task<List<Product>> ReadWebsite()
         {
+            List<Product> siteWideProducts = new List<Product>();
             WordPressClient client = await GetClient();
-            if (await client.IsValidJWToken())
+            foreach (Post post in client.Posts.GetAll().Result)
             {
-                foreach (Post post in client.Posts.GetAll().Result)
-                {
-                    Product.updates.Add(new Product(
-                        post.Title.Rendered,
-                        post.Categories[0],
-                        post.Link,
-                        post.Tags[0]
-                        ));
-                }
-                FixTags(Product.updates).Wait();
+                siteWideProducts.Add(new Product(
+                    post.Title.Rendered,
+                    post.Categories[0],
+                    post.Link,
+                    post.Tags[0]
+                    ));
             }
+            siteWideProducts = FixTags(siteWideProducts).Result;
+            return siteWideProducts;
         }
 
-        //public static async Task ReadLastWeek2(IWebDriver driver, WebDriverWait wait)
-        //{
-        //    WordPressClient client = await GetClient();
-        //    if (await client.IsValidJWToken())
-        //    {
-        //        foreach (Post post in client.Posts.GetAll().Result)
-        //        {
-        //            Product.updates.Add(new Product(
-        //                post.Title.Rendered,
-        //                post.Categories[0],
-        //                Selenium.getLink(driver, wait, post),
-        //                post.Tags[0]
-        //                ));
-        //        }
-        //        tagIDtoID(Product.updates).Wait();
-        //    }
-        //}
 
         /// <summary>
         /// removes or changes posts with sale changes
@@ -369,33 +363,34 @@ namespace Manage_HH
         public static async Task UpdatePosts()
         {
             WordPressClient client = await GetClient();
+            Dictionary<int, String> TagsIDtoName = SendGetTags(GetTags()).ToDictionary(k => k.Id, v => v.Name);
+            Dictionary<int, Post> PostsDict = SendGetPosts(GetPosts()).ToDictionary(p => p.Tags[0]);
 
-            foreach (Post post in client.Posts.GetAll().Result)
+            foreach (Product update in Product.updates)
             {
-                foreach (Product update in Product.updates)
+                if (PostsDict.ContainsKey(update.tagID))
                 {
-                    if (post.Tags[0] == update.tagID)
+                    Post post = PostsDict[update.tagID];
+                    //if update is no longer on sale, delete from wordpress
+                    if (update.Change == 2)
                     {
-                        //if update is no longer on sale, delete from wordpress
-                        if (update.Price == -1 || update.Xprice == -1)
+                        client.Posts.Delete(post.Id).Wait();
+                        client.Tags.Delete(post.Tags[0]).Wait();
+                        client.Media.Delete(post.FeaturedMedia.Value).Wait();
+                        tags.Remove(TagsIDtoName[update.tagID]);
+                    }
+                    else if(update.Change == 1)
+                    {
+                        //Otherwise update with the new prices
+                        Post updatePost = new Post
                         {
-                            await client.Posts.Delete(post.Id);
-                            await client.Tags.Delete(post.Tags[0]);
-                            await client.Media.Delete(post.FeaturedMedia.Value);
-                        }
-                        else
-                        {
-                            //Otherwise update with the new prices
-                            Post updatePost = new Post
-                            {
-                                Id = post.Id,
-                                Content = new Content("$" + update.Xprice + "-->" + "$" + update.Price),
-                            };
-                            await client.Posts.Update(updatePost);
-                        }
+                            Id = post.Id,
+                            Content = new Content("$" + update.Xprice + "-->" + "$" + update.Price),
+                        };
+                        client.Posts.Update(updatePost).Wait();
                     }
                 }
-            }   
+            }
         }
 
         /// <summary>
@@ -409,39 +404,40 @@ namespace Manage_HH
             int[] catID = new int[1] { product.CatID };
 
             WordPressClient client = await GetClient();
-            if (await client.IsValidJWToken())
+
+            //upload image to media library
+            Image pic = Image.FromFile(@"C:\Users\email\Desktop\Hardware Hub\images\" + product.ID + ".png");
+            client.Media.Create(Formatting.ToStream(pic, ImageFormat.Png), product.ID, "image/png").Wait();
+
+            Dictionary<String, MediaItem> MediaIDtoMedia = client.Media.GetAll().Result.ToDictionary(k => k.Slug.ToUpper());
+            int mediaID = MediaIDtoMedia[product.ID].Id;
+
+            //add tag
+            Tag newTag = new Tag
             {
-                Dictionary<String, MediaItem> MediaIDtoMedia = client.Media.GetAll().Result.ToDictionary(k => k.Slug);
-                int mediaID = MediaIDtoMedia[product.ID].Id;
+                Name = product.ID,
+                Slug = product.ID,
+            };
+            client.Tags.Create(newTag).Wait();
 
-                //add tag
-                Tag newTag = new Tag
-                {
-                    Name = product.ID,
-                    Slug = product.ID,
-                };
-                await client.Tags.Create(newTag);
+            Dictionary<String, Tag> IDtoTag = client.Tags.GetAll().Result.ToDictionary(k => k.Name);
 
-                Dictionary<String, Tag> IDtoTag = client.Tags.GetAll().Result.ToDictionary(k => k.Name);
+            //tags to be tied to post
+            int[] tagID = new int[1] { IDtoTag[product.ID].Id };
 
-                //tags to be tied to post
-                int[] tagID = new int[1] { IDtoTag[product.ID].Id };
+            //post created and uploaded
+            Post post = new Post
+            {
+                Title = new Title(product.Name),
+                Content = new Content("$" + product.Xprice + "-->" + "$" + product.Price),
+                Categories = catID,
+                FeaturedMedia = mediaID,
+                Tags = tagID
+            };
+            client.Posts.Create(post).Wait();
 
-                //post created and uploaded
-                Post post = new Post
-                {
-                    Title = new Title(product.Name),
-                    Content = new Content("$" + product.Xprice + "-->" + "$" + product.Price),
-                    Categories = catID,
-                    FeaturedMedia = mediaID,
-                    Tags = tagID
-                };
-                await client.Posts.Create(post);
-
-                //Link attached
-                Selenium.AddLink(driver, product.URL, product.ID);
-            }
-            
+            //Link attached
+            Selenium.AddLink(driver, product.URL, product.ID);
 
         }
 
@@ -450,26 +446,15 @@ namespace Manage_HH
         /// </summary>
         /// <param name="list"></param>
         /// <returns></returns>
-        public static async Task FixTags(List<Product> list)
+        public static async Task<List<Product>> FixTags(List<Product> list)
         {
             WordPressClient client = await GetClient();
             Dictionary<int, String> TagIDtoTag = client.Tags.GetAll().Result.ToDictionary(k => k.Id,v => v.Name);
-            if (await client.IsValidJWToken())
+            foreach (Product product in list)
             {
-                foreach (Product product in list)
-                {
-                    product.ID = TagIDtoTag[product.tagID];
-                    #region oldtagsearch
-                    //foreach (Tag tag in client.Tags.GetAll().Result)
-                    //{
-                    //    if(tag.Id == product.tagID)
-                    //    {
-                    //        product.ID = tag.Name;
-                    //    }
-                    //}
-                    #endregion
-                }
+                product.ID = TagIDtoTag[product.tagID];
             }
+            return list;
         }
 
         /// <summary>
@@ -482,42 +467,42 @@ namespace Manage_HH
             catID[0] = 7;
 
             WordPressClient client = await GetClient();
-            if (await client.IsValidJWToken())
+            
+            int mediaID = 0;
+            foreach (MediaItem item in client.Media.GetAll().Result)
             {
-                int mediaID = 0;
-                foreach (MediaItem item in client.Media.GetAll().Result)
+                if (item.Title.Rendered == "HH logo invert")
                 {
-                    if (item.Slug == "logo")
+                    mediaID = item.Id;
+
+                    Tag newTag = new Tag
                     {
-                        mediaID = item.Id;
+                        Name = "test",
+                        Slug = "test",
+                    };
+                    client.Tags.Create(newTag).Wait();
 
-                        Tag newTag = new Tag
+                    int[] tagID = new int[1];
+                    foreach (Tag tag in client.Tags.GetAll().Result)
+                    {
+                        if (tag.Name == "test")
                         {
-                            Name = "test",
-                            Slug = "test",
-                        };
-                        await client.Tags.Create(newTag);
-
-                        int[] tagID = new int[1];
-                        foreach (Tag tag in client.Tags.GetAll().Result)
-                        {
-                            if (tag.Name == "test")
-                            {
-                                tagID[0] = tag.Id;
-                            }
+                            tagID[0] = tag.Id;
                         }
-                        Post post = new Post
-                        {
-                            Title = new Title("Test Post"),
-                            Content = new Content("Test Content"),
-                            Categories = catID,
-                            FeaturedMedia = mediaID,
-                            Tags = tagID
-                        };
-                        await client.Posts.Create(post);
                     }
+                    Post post = new Post
+                    {
+                        Title = new Title("Test Post"),
+                        Content = new Content("Test Content"),
+                        Categories = catID,
+                        FeaturedMedia = mediaID,
+                        Tags = tagID
+                    };
+                    client.Posts.Create(post).Wait();
+                    MessageBox.Show("success");
                 }
             }
+            
 
         }
 
@@ -531,11 +516,10 @@ namespace Manage_HH
             var client = await GetClient();
             foreach (Product product in Product.products)
             {
-                if (await client.IsValidJWToken())
-                {
-                    Image pic = Image.FromFile(@"C:\Users\email\Desktop\Hardware Hub\images\" + product.ID + ".png");
-                    await client.Media.Create(Formatting.ToStream(pic, ImageFormat.Png), product.ID, "image/png");
-                }
+                
+                Image pic = Image.FromFile(@"C:\Users\email\Desktop\Hardware Hub\images\" + product.ID + ".png");
+                client.Media.Create(Formatting.ToStream(pic, ImageFormat.Png), product.ID, "image/png").Wait();
+                
             }
             
         }

@@ -10,57 +10,57 @@ namespace Manage_HH
     class Excel
     {
 
-        public static void WriteHHPosts()
-        {
-            IWorkbook wb = new XSSFWorkbook();
-            ISheet ws = wb.CreateSheet();
+        //public static void WriteHHPosts()
+        //{
+        //    IWorkbook wb = new XSSFWorkbook();
+        //    ISheet ws = wb.CreateSheet();
 
-            IRow header = ws.CreateRow(0);
-            header.CreateCell(0).SetCellValue("Name");
-            header.CreateCell(1).SetCellValue("Price");
-            header.CreateCell(2).SetCellValue("Old Price");
-            header.CreateCell(3).SetCellValue("Difference");
-            header.CreateCell(4).SetCellValue("Category");
-            header.CreateCell(5).SetCellValue("ID");
-            header.CreateCell(6).SetCellValue("URL");
+        //    IRow header = ws.CreateRow(0);
+        //    header.CreateCell(0).SetCellValue("Name");
+        //    header.CreateCell(1).SetCellValue("Price");
+        //    header.CreateCell(2).SetCellValue("Old Price");
+        //    header.CreateCell(3).SetCellValue("Difference");
+        //    header.CreateCell(4).SetCellValue("Category");
+        //    header.CreateCell(5).SetCellValue("ID");
+        //    header.CreateCell(6).SetCellValue("URL");
 
-            int rowcount = 1;
-            List<Post> WP = Wordpress.SendGetPosts(Wordpress.GetPosts());
-            foreach (Post post in WP)
-            {
-                IRow row = ws.CreateRow(rowcount);
+        //    int rowcount = 1;
+        //    List<Post> WP = Wordpress.SendGetPosts(Wordpress.GetPosts());
+        //    foreach (Post post in WP)
+        //    {
+        //        IRow row = ws.CreateRow(rowcount);
 
-                row.CreateCell(0).SetCellValue(post.Title.Rendered);
-                row.CreateCell(1).SetCellValue(int.Parse(Formatting.GetPrice(post.Content.Rendered)));
-                row.CreateCell(2).SetCellValue(int.Parse(Formatting.GetXprice(post.Content.Rendered)));
-                row.CreateCell(3).SetCellValue(int.Parse(Formatting.GetXprice(post.Content.Rendered)) - int.Parse(Formatting.GetPrice(post.Content.Rendered)));
-                row.CreateCell(4).SetCellValue(Formatting.CatIDtoCategory(post.Categories[0]));
-                row.CreateCell(5).SetCellValue(Wordpress.SendGetTag(Wordpress.GetTag(post)));
-                row.CreateCell(6).SetCellValue(post.Link);
+        //        row.CreateCell(0).SetCellValue(post.Title.Rendered);
+        //        row.CreateCell(1).SetCellValue(int.Parse(Formatting.GetPrice(post.Content.Rendered)));
+        //        row.CreateCell(2).SetCellValue(int.Parse(Formatting.GetXprice(post.Content.Rendered)));
+        //        row.CreateCell(3).SetCellValue(int.Parse(Formatting.GetXprice(post.Content.Rendered)) - int.Parse(Formatting.GetPrice(post.Content.Rendered)));
+        //        row.CreateCell(4).SetCellValue(Formatting.CatIDtoCategory(post.Categories[0]));
+        //        row.CreateCell(5).SetCellValue(Wordpress.SendGetTag(Wordpress.GetTag(post)));
+        //        row.CreateCell(6).SetCellValue(post.Link);
 
-                rowcount++;
-            }
+        //        rowcount++;
+        //    }
 
-            ws.CreateRow(rowcount).CreateCell(0).SetCellValue("Stop");
-            rowcount++;
-            ws.CreateRow(rowcount).CreateCell(0).SetCellValue(DateTime.Now.ToString("D"));
+        //    ws.CreateRow(rowcount).CreateCell(0).SetCellValue("Stop");
+        //    rowcount++;
+        //    ws.CreateRow(rowcount).CreateCell(0).SetCellValue(DateTime.Now.ToString("D"));
 
-            wb.Write(new FileStream(@"C:\Users\email\Desktop\Hardware Hub\HHPosts.xlsx", FileMode.Create, FileAccess.Write, FileShare.ReadWrite));
-            wb.Close();
-        }
+        //    wb.Write(new FileStream(@"C:\Users\email\Desktop\Hardware Hub\HHPosts.xlsx", FileMode.Create, FileAccess.Write, FileShare.ReadWrite));
+        //    wb.Close();
+        //}
 
-        public static void TestExcel()
-        {
-            IWorkbook wb = new XSSFWorkbook();
-            wb.CreateSheet();
-            ISheet ws = wb.GetSheetAt(0);
+        //public static void TestExcel()
+        //{
+        //    IWorkbook wb = new XSSFWorkbook();
+        //    wb.CreateSheet();
+        //    ISheet ws = wb.GetSheetAt(0);
 
-            ws.CreateRow(0).CreateCell(0).SetCellValue("test");
+        //    ws.CreateRow(0).CreateCell(0).SetCellValue("test");
 
-            Stream stream = new FileStream("C:\\Users\\email\\Desktop\\Hardware Hub\\test.xlsx", FileMode.Open);
-            wb.Write(stream);
-            wb.Close();
-        }
+        //    Stream stream = new FileStream("C:\\Users\\email\\Desktop\\Hardware Hub\\test.xlsx", FileMode.Open);
+        //    wb.Write(stream);
+        //    wb.Close();
+        //}
 
         public static void ReadProducts()
         {
